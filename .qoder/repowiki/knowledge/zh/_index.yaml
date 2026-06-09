@@ -1,0 +1,127 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: main
+exported_at: "2026-06-09T14:15:28Z"
+modules:
+    "":
+        dir_name: 摇一摇抓大鹅全栈游戏系统
+        title: 摇一摇抓大鹅全栈游戏系统
+        scope:
+            - package-lock.json
+            - admin\index.html
+            - admin\package-lock.json
+            - admin\package.json
+            - admin\src\App.vue
+            - admin\src\api\index.ts
+            - admin\src\env.d.ts
+            - admin\src\layout\MainLayout.vue
+            - admin\src\main.ts
+            - admin\src\router\index.ts
+            - admin\src\stores\user.ts
+            - admin\src\utils\request.ts
+            - admin\src\views\ItemManage.vue
+            - admin\src\views\LevelManage.vue
+            - admin\src\views\Login.vue
+            - admin\src\views\PlayerStats.vue
+            - admin\tsconfig.json
+            - admin\tsconfig.node.json
+            - admin\vite.config.ts
+            - backend\nest-cli.json
+            - backend\package-lock.json
+            - backend\package.json
+            - backend\src\app.module.ts
+            - backend\src\common\http-exception.filter.ts
+            - backend\src\common\result.ts
+            - backend\src\common\transform.interceptor.ts
+            - backend\src\config\database.config.ts
+            - backend\src\entities\item-info.entity.ts
+            - backend\src\entities\level-config.entity.ts
+            - backend\src\entities\user-record.entity.ts
+            - backend\src\main.ts
+            - backend\src\modules\admin\admin.controller.ts
+            - backend\src\modules\admin\admin.module.ts
+            - backend\src\modules\admin\admin.service.ts
+            - backend\src\modules\item\item.controller.ts
+            - backend\src\modules\item\item.module.ts
+            - backend\src\modules\item\item.service.ts
+            - backend\src\modules\level\level.controller.ts
+            - backend\src\modules\level\level.module.ts
+            - backend\src\modules\level\level.service.ts
+            - backend\src\modules\redis\redis.module.ts
+            - backend\src\modules\redis\redis.service.ts
+            - backend\src\modules\user\user.controller.ts
+            - backend\src\modules\user\user.module.ts
+            - backend\src\modules\user\user.service.ts
+            - backend\tsconfig.build.json
+            - backend\tsconfig.json
+            - deploy\Dockerfile
+            - deploy\deploy.md
+            - deploy\docker-compose.yml
+            - deploy\nginx\default.conf
+            - game\index.html
+            - game\mini-game\game.js
+            - game\mini-game\game.json
+            - game\package-lock.json
+            - game\package.json
+            - game\src\App.vue
+            - game\src\components\GameContainer.vue
+            - game\src\core\Http.ts
+            - game\src\core\PhysicWorld.ts
+            - game\src\core\ShakeSensor.ts
+            - game\src\core\ThreeEnv.ts
+            - game\src\env.d.ts
+            - game\src\main.ts
+            - game\src\pool\ItemPool.ts
+            - game\src\utils\GameLogic.ts
+            - game\src\views\Game.vue
+            - game\src\wx.d.ts
+            - game\tsconfig.json
+            - game\tsconfig.node.json
+            - game\vite.config.ts
+            - game\vite.config.wx.ts
+            - sql\init.sql
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    admin:
+        dir_name: 游戏管理后台前端
+        title: 游戏管理后台前端
+        scope:
+            - admin/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: backend
+    backend:
+        dir_name: 摇一摇抓大鹅游戏后端服务
+        title: 摇一摇抓大鹅游戏后端服务
+        scope:
+            - backend/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: admin
+            - path: game
+    deploy:
+        dir_name: 容器化部署与运维配置
+        title: 容器化部署与运维配置
+        scope:
+            - deploy/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    game:
+        dir_name: 3D物理消除游戏客户端
+        title: 3D物理消除游戏客户端
+        scope:
+            - game/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: backend

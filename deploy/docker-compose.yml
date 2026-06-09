@@ -1,0 +1,68 @@
+# 摇一摇抓大鹅 - Docker一键部署编排
+# 包含：NestJS后端、MySQL8、Redis
+
+version: '3.8'
+
+services:
+  # MySQL8数据库
+  mysql:
+    image: mysql:8.0
+    container_name: goose_mysql
+    restart: always
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: goose_game
+      MYSQL_CHARSET: utf8mb4
+      MYSQL_COLLATION: utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    networks:
+      - goose_net
+
+  # Redis缓存
+  redis:
+    image: redis:7-alpine
+    container_name: goose_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - goose_net
+
+  # NestJS后端服务
+  backend:
+    build:
+      context: ../backend
+      dockerfile: ../deploy/Dockerfile
+    container_name: goose_backend
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: 123456
+      DB_NAME: goose_game
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      PORT: 3000
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - goose_net
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  goose_net:
+    driver: bridge
