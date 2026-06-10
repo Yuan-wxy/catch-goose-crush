@@ -141,8 +141,7 @@ function useShuffleTool() {
 
 /** 道具：一键凑三 */
 function useTripleTool() {
-  const itemTypes = gameRef.value?.getItemTypes() || ['apple', 'banana', 'orange'];
-  gameRef.value?.useMakeTriple(itemTypes);
+  gameRef.value?.useMakeTriple();
 }
 
 /** 模拟摇晃（网页调试） */

@@ -10,7 +10,7 @@ import { ThreeEnv } from '../core/ThreeEnv';
 import { PhysicWorld } from '../core/PhysicWorld';
 import { ShakeSensor } from '../core/ShakeSensor';
 import { ItemPool } from '../pool/ItemPool';
-import { addToSlot, isGameOver, isLevelClear, SlotItem, generateTripleItems, generateBalancedItems } from '../utils/GameLogic';
+import { addToSlot, isGameOver, isLevelClear, SlotItem, generateBalancedItems } from '../utils/GameLogic';
 
 // 向父组件暴露方法
 const emit = defineEmits<{
@@ -224,12 +224,97 @@ function useShuffle() {
   });
 }
 
-/** 道具：一键凑三 - 随机生成一组可三消食材丢入锅内 */
-function useMakeTriple(itemTypes: string[]) {
+/** 道具：一键凑三 - 从锅中选取3个同品种食材入槽消除 */
+function useMakeTriple() {
   if (!isPlaying) return;
-  const items = generateTripleItems(slots, itemTypes);
-  items.forEach((key: string) => spawnItem(key, 1 + Math.random() * 2.5));
+
+  // 统计卡槽中已有的食材数量
+  const slotCountMap: Record<string, number> = {};
+  slots.forEach((s) => {
+    slotCountMap[s.itemKey] = (slotCountMap[s.itemKey] || 0) + 1;
+  });
+
+  // 统计锅中各品种的食材列表
+  const potGroupMap: Record<string, typeof potItems> = {};
+  potItems.forEach((item) => {
+    if (!potGroupMap[item.itemKey]) potGroupMap[item.itemKey] = [];
+    potGroupMap[item.itemKey].push(item);
+  });
+
+  // 确定目标品种和需要从锅中选取的数量
+  let targetKey = '';
+  let needCount = 0;
+
+  // 优先策略：卡槽中已有某品种，从锅中补齐到3个
+  let bestNeed = 4; // 寻找需要最少的
+  for (const [key, count] of Object.entries(slotCountMap)) {
+    const potHas = potGroupMap[key]?.length || 0;
+    const need = 3 - count;
+    if (need > 0 && potHas >= need && need < bestNeed) {
+      targetKey = key;
+      needCount = need;
+      bestNeed = need;
+    }
+  }
+
+  // 如果卡槽中没有可补齐的，从锅中直接选3个同品种
+  if (!targetKey) {
+    for (const [key, items] of Object.entries(potGroupMap)) {
+      if (items.length >= 3) {
+        targetKey = key;
+        needCount = 3;
+        break;
+      }
+    }
+  }
+
+  if (!targetKey) return; // 没有可凑三的食材
+
+  // 从锅中选取食材，逐个加入卡槽（addToSlot会自动三消）
+  const potItemsOfType = potGroupMap[targetKey];
+  for (let i = 0; i < needCount; i++) {
+    const potItem = potItemsOfType[i];
+
+    // 从锅中移除
+    const idx = potItems.indexOf(potItem);
+    if (idx < 0) continue;
+    potItems.splice(idx, 1);
+
+    // 取消物理注册，移出场景
+    physicWorld.unregisterBody(potItem.body);
+    threeEnv.scene.remove(potItem.mesh);
+
+    // 添加到卡槽
+    const slotItem: SlotItem = {
+      itemKey: potItem.itemKey,
+      meshRef: potItem.mesh,
+      bodyRef: potItem.body,
+    };
+    const result = addToSlot(slots, slotItem);
+
+    // 如果有三消，回收消除的mesh
+    if (result.matched > 0) {
+      const currentMeshes = new Set(result.slots.map((s) => s.meshRef));
+      slots.forEach((s) => {
+        if (!currentMeshes.has(s.meshRef)) {
+          itemPool.release(s.meshRef as THREE.Mesh);
+        }
+      });
+    }
+    slots = result.slots;
+  }
+
+  emit('slotUpdate', slots);
   emit('potCountUpdate', potItems.length);
+
+  // 检查游戏状态
+  if (isLevelClear(potItems.length)) {
+    isPlaying = false;
+    emit('levelClear');
+  } else if (isGameOver(slots)) {
+    isPlaying = false;
+    emit('gameOver');
+  }
 }
 
 /** 清除所有食材 */
