@@ -25,33 +25,60 @@ export class PhysicWorld {
     this.world.defaultContactMaterial = contactMaterial;
   }
 
-  /** 创建漏斗锅体碰撞体（底部+四周侧壁） */
+  /** 创建漏斗锅体碰撞体（多段壁面近似圆柱 + 平面底部）
+   *  原方案用4面Box墙，对角线缝隙大，球容易飞出
+   *  改用16段倾斜Box拼接近似圆形漏斗，向上延伸2单位防止颠锅飞出
+   */
   createPotCollider() {
-    // 底部碰撞体 - 平面
-    const bottomBody = new CANNON.Body({ mass: 0 }); // mass=0 静态体
-    const bottomShape = new CANNON.Box(new CANNON.Vec3(3, 0.1, 3));
-    bottomBody.addShape(bottomShape);
-    bottomBody.position.set(0, -2.1, 0);
+    // 底部碰撞体 - 无限平面，确保小球不会从底部漏出
+    const bottomBody = new CANNON.Body({ mass: 0 });
+    bottomBody.addShape(new CANNON.Plane());
+    bottomBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+    bottomBody.position.set(0, -2, 0);
     this.world.addBody(bottomBody);
 
-    // 四周侧壁 - 用4个倾斜的Box静态刚体拼接
-    const wallThickness = 0.3;
-    const wallHeight = 4;
-    const wallData = [
-      { pos: [0, 0, 4], rot: [0.3, 0, 0] },   // 前壁
-      { pos: [0, 0, -4], rot: [-0.3, 0, 0] },  // 后壁
-      { pos: [4, 0, 0], rot: [0, 0, -0.3] },   // 右壁
-      { pos: [-4, 0, 0], rot: [0, 0, 0.3] },   // 左壁
-    ];
+    // 漏斗侧壁参数
+    const segments = 16;             // 壁面段数，越多越圆滑
+    const bottomRadius = 3;          // 锅底半径
+    const topRadius = 5;             // 锅口半径（与可视模型一致）
+    const funnelHeight = 4;          // 漏斗高度：y=-2 到 y=2
+    const extraHeight = 2;           // 向上延伸到 y=4，防止颠锅飞出
 
-    wallData.forEach((w) => {
+    // 计算延伸后的顶部半径（保持相同斜率）
+    const slope = (topRadius - bottomRadius) / funnelHeight; // 0.5
+    const extendedTopRadius = topRadius + slope * extraHeight; // 6
+    const totalHeight = funnelHeight + extraHeight; // 6
+    const midRadius = (bottomRadius + extendedTopRadius) / 2; // 4.5
+    const midY = -2 + totalHeight / 2; // 1
+    const tiltAngle = Math.atan2(extendedTopRadius - bottomRadius, totalHeight); // ≈0.4636 rad
+    const slantHeight = Math.sqrt(totalHeight ** 2 + (extendedTopRadius - bottomRadius) ** 2);
+    const segWidth = 2 * midRadius * Math.sin(Math.PI / segments) + 0.2; // 加宽0.2防段间缝隙
+    const wallThickness = 0.3;
+
+    for (let i = 0; i < segments; i++) {
+      const theta = (2 * Math.PI * i) / segments;
       const wallBody = new CANNON.Body({ mass: 0 });
-      const wallShape = new CANNON.Box(new CANNON.Vec3(5, wallHeight / 2, wallThickness));
+      const wallShape = new CANNON.Box(
+        new CANNON.Vec3(segWidth / 2, slantHeight / 2, wallThickness / 2),
+      );
       wallBody.addShape(wallShape);
-      wallBody.position.set(w.pos[0], w.pos[1], w.pos[2]);
-      wallBody.quaternion.setFromEuler(w.rot[0], w.rot[1], w.rot[2]);
+
+      // 位置：在圆周上，y对齐漏斗中点
+      wallBody.position.set(
+        midRadius * Math.sin(theta),
+        midY,
+        midRadius * Math.cos(theta),
+      );
+
+      // 旋转：先绕Y轴旋转到对应角度，再绕局部X轴外倾（形成漏斗）
+      const qY = new CANNON.Quaternion();
+      qY.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), theta);
+      const qTilt = new CANNON.Quaternion();
+      qTilt.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), tiltAngle);
+      wallBody.quaternion = qY.mult(qTilt);
+
       this.world.addBody(wallBody);
-    });
+    }
   }
 
   /** 创建球形食材刚体 */
@@ -64,6 +91,9 @@ export class PhysicWorld {
       linearDamping: 0.3, // 线性阻尼，减少滑动
       angularDamping: 0.5, // 角阻尼，减少旋转
     });
+    // 启用CCD（连续碰撞检测），防止高速穿透薄壁
+    body.ccdSpeedThreshold = 0.5;
+    body.ccdIterations = 10;
     this.world.addBody(body);
     return body;
   }
@@ -105,5 +135,21 @@ export class PhysicWorld {
   /** 获取所有已注册的刚体-网格对 */
   getRegisteredBodies() {
     return this.bodies;
+  }
+
+  /** 安全边界检查：将跑出锅外的球强制拉回锅内 */
+  clampBodies() {
+    const maxDist = 5; // 最大水平距离
+    const minY = -3; // 最低Y
+    const maxY = 10; // 最高Y（允许颠锅时弹起）
+
+    this.bodies.forEach(({ body }) => {
+      const dist = Math.sqrt(body.position.x ** 2 + body.position.z ** 2);
+      if (dist > maxDist || body.position.y < minY || body.position.y > maxY) {
+        body.position.set((Math.random() - 0.5) * 2, 3, (Math.random() - 0.5) * 2);
+        body.velocity.set(0, 0, 0);
+        body.angularVelocity.set(0, 0, 0);
+      }
+    });
   }
 }

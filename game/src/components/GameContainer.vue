@@ -3,7 +3,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, defineExpose } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { ThreeEnv } from '../core/ThreeEnv';
@@ -52,6 +52,7 @@ onMounted(() => {
   threeEnv.addAnimFn(() => {
     if (isPlaying) {
       physicWorld.step();
+      physicWorld.clampBodies(); // 安全边界检查，防止小球飞出
       physicWorld.syncBodies();
     }
   });
@@ -75,10 +76,10 @@ function loadLevel(itemTypeList: string[], itemTotal: number) {
   levelItemTypes = itemTypeList;
   isPlaying = true;
 
-  // 根据关卡配置生成食材
+  // 根据关卡配置生成食材（y控制在壁面高度内，防止高处生成飞出）
   for (let i = 0; i < itemTotal; i++) {
     const itemKey = itemTypeList[i % itemTypeList.length];
-    spawnItem(itemKey, 3 + Math.random() * 4);
+    spawnItem(itemKey, 1 + Math.random() * 2.5);
   }
 
   emit('potCountUpdate', potItems.length);
@@ -169,9 +170,9 @@ function onCanvasClick(event: MouseEvent) {
 function onShakePot() {
   if (!isPlaying) return;
   const impulse = new CANNON.Vec3(
-    (Math.random() - 0.5) * 8,
-    6 + Math.random() * 4,
-    (Math.random() - 0.5) * 8,
+    (Math.random() - 0.5) * 6,
+    3 + Math.random() * 3,
+    (Math.random() - 0.5) * 6,
   );
   physicWorld.applyImpulseToAll(impulse);
 }
@@ -181,9 +182,9 @@ function useReturnToPot(slotIndex: number) {
   if (slotIndex < 0 || slotIndex >= slots.length) return;
   const item = slots.splice(slotIndex, 1)[0];
 
-  // 重新放入锅内
+  // 重新放入锅内（y控制在壁面高度内）
   const mesh = item.meshRef as THREE.Mesh;
-  const y = 3 + Math.random() * 2;
+  const y = 1 + Math.random() * 2.5;
   const x = (Math.random() - 0.5) * 3;
   const z = (Math.random() - 0.5) * 3;
   mesh.position.set(x, y, z);
@@ -210,11 +211,11 @@ function useShuffle() {
     physicWorld.unregisterBody(item.body);
   });
 
-  // 重新分配随机位置
+  // 重新分配随机位置（y控制在壁面高度内）
   potItems.forEach((item) => {
-    const x = (Math.random() - 0.5) * 4;
-    const y = 5 + Math.random() * 3;
-    const z = (Math.random() - 0.5) * 4;
+    const x = (Math.random() - 0.5) * 3;
+    const y = 1 + Math.random() * 2.5;
+    const z = (Math.random() - 0.5) * 3;
     item.mesh.position.set(x, y, z);
 
     const body = physicWorld.createSphereBody(x, y, z);
@@ -227,7 +228,7 @@ function useShuffle() {
 function useMakeTriple(itemTypes: string[]) {
   if (!isPlaying) return;
   const items = generateTripleItems(slots, itemTypes);
-  items.forEach((key: string) => spawnItem(key, 5 + Math.random() * 3));
+  items.forEach((key: string) => spawnItem(key, 1 + Math.random() * 2.5));
   emit('potCountUpdate', potItems.length);
 }
 
