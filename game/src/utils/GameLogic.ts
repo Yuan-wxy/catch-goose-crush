@@ -142,6 +142,47 @@ export function generateTripleItems(
 }
 
 /**
+ * 生成每种数量为3的倍数的食材列表
+ * 确保所有食材都能通过三消完全消除，不会剩余
+ */
+export function generateBalancedItems(
+  itemTypeList: string[],
+  itemTotal: number,
+): string[] {
+  // 总数量向下取整到3的倍数
+  const adjustedTotal = Math.floor(itemTotal / 3) * 3;
+  if (adjustedTotal === 0) return [];
+
+  const types = itemTypeList.length;
+  // 每种类型的基础数量（向下取整到3的倍数）
+  const basePerType = Math.floor(adjustedTotal / types / 3) * 3;
+  const counts = new Array(types).fill(basePerType);
+
+  // 剩余数量以3为一组分配给各类型
+  let remaining = adjustedTotal - basePerType * types;
+  for (let i = 0; remaining >= 3; i++) {
+    counts[i % types] += 3;
+    remaining -= 3;
+  }
+
+  // 生成食材列表
+  const items: string[] = [];
+  for (let i = 0; i < types; i++) {
+    for (let j = 0; j < counts[i]; j++) {
+      items.push(itemTypeList[i]);
+    }
+  }
+
+  // Fisher-Yates 洗牌，让锅内食材随机分布
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+
+  return items;
+}
+
+/**
  * 道具：洗牌 - 随机重新排列锅内食材位置
  * 返回新的坐标数组（x, y, z）
  */
@@ -150,7 +191,7 @@ export function shufflePositions(count: number, range = 2): { x: number; y: numb
   for (let i = 0; i < count; i++) {
     positions.push({
       x: (Math.random() - 0.5) * range * 2,
-      y: 3 + Math.random() * 4, // 从锅上方掉落
+      y: 1 + Math.random() * 2.5,
       z: (Math.random() - 0.5) * range * 2,
     });
   }

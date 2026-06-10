@@ -10,7 +10,7 @@ import { ThreeEnv } from '../core/ThreeEnv';
 import { PhysicWorld } from '../core/PhysicWorld';
 import { ShakeSensor } from '../core/ShakeSensor';
 import { ItemPool } from '../pool/ItemPool';
-import { addToSlot, isGameOver, isLevelClear, SlotItem, generateTripleItems } from '../utils/GameLogic';
+import { addToSlot, isGameOver, isLevelClear, SlotItem, generateTripleItems, generateBalancedItems } from '../utils/GameLogic';
 
 // 向父组件暴露方法
 const emit = defineEmits<{
@@ -76,9 +76,9 @@ function loadLevel(itemTypeList: string[], itemTotal: number) {
   levelItemTypes = itemTypeList;
   isPlaying = true;
 
-  // 根据关卡配置生成食材（y控制在壁面高度内，防止高处生成飞出）
-  for (let i = 0; i < itemTotal; i++) {
-    const itemKey = itemTypeList[i % itemTypeList.length];
+  // 生成每种数量为3的倍数的食材列表，确保能全部消除
+  const items = generateBalancedItems(itemTypeList, itemTotal);
+  for (const itemKey of items) {
     spawnItem(itemKey, 1 + Math.random() * 2.5);
   }
 
