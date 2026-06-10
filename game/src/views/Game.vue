@@ -8,6 +8,7 @@
         @gameOver="onGameOver"
         @levelClear="onLevelClear"
         @potCountUpdate="onPotCountUpdate"
+        @foodPicked="onFoodPicked"
       />
     </div>
 
@@ -27,7 +28,9 @@
           :class="{ 'slot-filled': item, 'slot-selected': selectedSlot === index }"
           @click="onSlotClick(index)"
         >
-          <span v-if="item" class="slot-item">{{ item.itemKey }}</span>
+          <div v-if="item" class="slot-food" :style="{ backgroundColor: getItemStyle(item.itemKey).color }">
+            <span class="slot-emoji">{{ getItemStyle(item.itemKey).emoji }}</span>
+          </div>
         </div>
         <!-- 空槽位补齐 -->
         <div v-for="n in (7 - displaySlots.length)" :key="'empty-' + n" class="slot-cell slot-empty"></div>
@@ -79,6 +82,98 @@ const selectedSlot = ref(-1); // 当前选中的卡槽索引（用于回锅道�
 const showFailDialog = ref(false);
 const showClearDialog = ref(false);
 const openid = ref('test_openid_' + Date.now()); // 模拟微信openid
+
+/** 食材样式映射 - 与ItemPool.ts颜色和3D球体保持一致 */
+const ITEM_STYLE: Record<string, { emoji: string; color: string }> = {
+  apple: { emoji: '🍎', color: '#ff4444' },
+  banana: { emoji: '🍌', color: '#ffcc00' },
+  orange: { emoji: '🍊', color: '#ff8800' },
+  grape: { emoji: '🍇', color: '#8844cc' },
+  peach: { emoji: '🍑', color: '#ffaa88' },
+};
+
+function getItemStyle(itemKey: string): { emoji: string; color: string } {
+  return ITEM_STYLE[itemKey] || { emoji: '🔵', color: '#aaaaaa' };
+}
+
+// ========== 飞行动画系统 ==========
+let flyQueue: { itemKey: string; screenX: number; screenY: number }[] = [];
+let isFlyAnimating = false;
+
+/** 接收食材拾取事件，排队播放飞行动画 */
+function onFoodPicked(data: { itemKey: string; screenX: number; screenY: number }) {
+  flyQueue.push(data);
+  if (!isFlyAnimating) processFlyQueue();
+}
+
+/** 依次处理飞行动画队列 */
+function processFlyQueue() {
+  if (flyQueue.length === 0) {
+    isFlyAnimating = false;
+    return;
+  }
+  isFlyAnimating = true;
+  const data = flyQueue.shift()!;
+  startFlyingAnim(data, () => {
+    gameRef.value?.completePickItem();
+    processFlyQueue();
+  });
+}
+
+/** 创建DOM飞行动画元素 */
+function startFlyingAnim(
+  data: { itemKey: string; screenX: number; screenY: number },
+  onComplete: () => void,
+) {
+  const style = getItemStyle(data.itemKey);
+
+  // 创建飞行元素
+  const el = document.createElement('div');
+  el.className = 'flying-food';
+  el.style.backgroundColor = style.color;
+  el.innerHTML = style.emoji;
+
+  // 初始位置：3D球体的屏幕投影
+  el.style.position = 'fixed';
+  el.style.left = data.screenX + 'px';
+  el.style.top = data.screenY + 'px';
+  el.style.zIndex = '1000';
+  el.style.transform = 'translate(-50%, -50%) scale(1)';
+  el.style.transition = 'left 0.35s cubic-bezier(0.4, 0, 0.2, 1), top 0.35s cubic-bezier(0.4, 0, 0.2, 1), transform 0.35s ease';
+  document.body.appendChild(el);
+
+  // 计算目标槽位位置
+  const targetIndex = gameRef.value?.getTargetSlotIndex(data.itemKey) ?? 0;
+  const slotCells = document.querySelectorAll('.slot-cell');
+  const targetCell = slotCells[targetIndex] as HTMLElement;
+  let targetX = data.screenX;
+  let targetY = data.screenY;
+  if (targetCell) {
+    const rect = targetCell.getBoundingClientRect();
+    targetX = rect.left + rect.width / 2;
+    targetY = rect.top + rect.height / 2;
+  } else {
+    const slotBar = document.querySelector('.slot-bar');
+    if (slotBar) {
+      const rect = slotBar.getBoundingClientRect();
+      targetX = rect.left + rect.width / 2;
+      targetY = rect.top + rect.height / 2;
+    }
+  }
+
+  // 触发飞行动画
+  requestAnimationFrame(() => {
+    el.style.left = targetX + 'px';
+    el.style.top = targetY + 'px';
+    el.style.transform = 'translate(-50%, -50%) scale(0.85)';
+  });
+
+  // 动画完成回调
+  el.addEventListener('transitionend', () => {
+    document.body.removeChild(el);
+    onComplete();
+  }, { once: true });
+}
 
 /** 加载关卡配置并启动游戏 */
 async function startLevel(levelNo: number) {
@@ -239,19 +334,58 @@ onMounted(() => {
 }
 
 .slot-filled {
-  border-color: #4ecdc4;
-  background: rgba(78, 205, 196, 0.2);
+  border-color: transparent;
+  background: transparent;
+  padding: 0;
 }
 
 .slot-selected {
-  border-color: #ff6b6b;
-  background: rgba(255, 107, 107, 0.3);
   transform: scale(1.1);
+  filter: brightness(1.3);
 }
 
-.slot-item {
-  font-weight: bold;
-  text-transform: uppercase;
+.slot-food {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), inset 0 -2px 4px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s;
+  animation: slotPopIn 0.3s ease-out;
+}
+
+.slot-emoji {
+  font-size: 24px;
+  line-height: 1;
+}
+
+@keyframes slotPopIn {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.flying-food {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  line-height: 1;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
 }
 
 .tool-bar {

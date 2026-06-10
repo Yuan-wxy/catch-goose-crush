@@ -18,6 +18,7 @@ const emit = defineEmits<{
   (e: 'gameOver'): void;
   (e: 'levelClear'): void;
   (e: 'potCountUpdate', count: number): void;
+  (e: 'foodPicked', data: { itemKey: string; screenX: number; screenY: number }): void;
 }>();
 
 const containerRef = ref<HTMLDivElement>();
@@ -34,6 +35,38 @@ let levelItemTypes: string[] = [];
 let isPlaying = false;
 let raycaster = new THREE.Raycaster();
 let mouse = new THREE.Vector2();
+
+// 待入槽食材队列（飞行动画完成后依次入槽）
+interface PendingItem {
+  itemKey: string;
+  mesh: THREE.Mesh;
+  body: CANNON.Body;
+  screenX: number;
+  screenY: number;
+}
+let pendingItems: PendingItem[] = [];
+
+/** 将3D世界坐标投影到页面坐标（用于飞行动画起点） */
+function worldToPage(worldPos: THREE.Vector3): { x: number; y: number } {
+  const vec = worldPos.clone().project(threeEnv.camera);
+  const canvasRect = containerRef.value!.getBoundingClientRect();
+  return {
+    x: canvasRect.left + (vec.x * 0.5 + 0.5) * canvasRect.width,
+    y: canvasRect.top + (-vec.y * 0.5 + 0.5) * canvasRect.height,
+  };
+}
+
+/** 预测食材将插入卡槽的索引位置（供父组件定位飞行目标） */
+function predictSlotIndex(itemKey: string): number {
+  let insertIndex = -1;
+  for (let i = slots.length - 1; i >= 0; i--) {
+    if (slots[i].itemKey === itemKey) {
+      insertIndex = i + 1;
+      break;
+    }
+  }
+  return insertIndex === -1 ? slots.length : insertIndex;
+}
 
 /** 初始化3D场景+物理世界 */
 onMounted(() => {
@@ -128,41 +161,31 @@ function onCanvasClick(event: MouseEvent) {
 
     const item = potItems.splice(idx, 1)[0];
 
-    // 取消物理注册，回收到对象池
+    // 记录3D世界坐标用于投影
+    const worldPos = item.mesh.position.clone();
+
+    // 取消物理注册，从场景移除
     physicWorld.unregisterBody(item.body);
     threeEnv.scene.remove(item.mesh);
 
-    // 添加到卡槽
-    const slotItem: SlotItem = {
+    // 投影到页面坐标
+    const screenPos = worldToPage(worldPos);
+
+    // 存入待入槽队列
+    pendingItems.push({
       itemKey,
-      meshRef: item.mesh,
-      bodyRef: item.body,
-    };
-    const result = addToSlot(slots, slotItem);
+      mesh: item.mesh,
+      body: item.body,
+      screenX: screenPos.x,
+      screenY: screenPos.y,
+    });
 
-    // 如果有三消，回收消除的mesh
-    if (result.matched > 0) {
-      // 找出被消除的mesh（slots中不再存在的）
-      const currentMeshes = new Set(result.slots.map((s) => s.meshRef));
-      slots.forEach((s) => {
-        if (!currentMeshes.has(s.meshRef)) {
-          itemPool.release(s.meshRef as THREE.Mesh);
-        }
-      });
+    // 如果是队列中第一个，立即发射飞行动画事件
+    if (pendingItems.length === 1) {
+      emit('foodPicked', { itemKey, screenX: screenPos.x, screenY: screenPos.y });
     }
-    slots = result.slots;
 
-    emit('slotUpdate', slots);
     emit('potCountUpdate', potItems.length);
-
-    // 检查游戏状态
-    if (isLevelClear(potItems.length)) {
-      isPlaying = false;
-      emit('levelClear');
-    } else if (isGameOver(slots)) {
-      isPlaying = false;
-      emit('gameOver');
-    }
   }
 }
 
@@ -246,7 +269,7 @@ function useMakeTriple() {
   let needCount = 0;
 
   // 优先策略：卡槽中已有某品种，从锅中补齐到3个
-  let bestNeed = 4; // 寻找需要最少的
+  let bestNeed = 4;
   for (const [key, count] of Object.entries(slotCountMap)) {
     const potHas = potGroupMap[key]?.length || 0;
     const need = 3 - count;
@@ -270,8 +293,9 @@ function useMakeTriple() {
 
   if (!targetKey) return; // 没有可凑三的食材
 
-  // 从锅中选取食材，逐个加入卡槽（addToSlot会自动三消）
+  // 从锅中选取食材，存入待入槽队列
   const potItemsOfType = potGroupMap[targetKey];
+  const wasEmpty = pendingItems.length === 0;
   for (let i = 0; i < needCount; i++) {
     const potItem = potItemsOfType[i];
 
@@ -280,41 +304,28 @@ function useMakeTriple() {
     if (idx < 0) continue;
     potItems.splice(idx, 1);
 
-    // 取消物理注册，移出场景
+    // 记录位置并投影
+    const worldPos = potItem.mesh.position.clone();
     physicWorld.unregisterBody(potItem.body);
     threeEnv.scene.remove(potItem.mesh);
+    const screenPos = worldToPage(worldPos);
 
-    // 添加到卡槽
-    const slotItem: SlotItem = {
+    pendingItems.push({
       itemKey: potItem.itemKey,
-      meshRef: potItem.mesh,
-      bodyRef: potItem.body,
-    };
-    const result = addToSlot(slots, slotItem);
-
-    // 如果有三消，回收消除的mesh
-    if (result.matched > 0) {
-      const currentMeshes = new Set(result.slots.map((s) => s.meshRef));
-      slots.forEach((s) => {
-        if (!currentMeshes.has(s.meshRef)) {
-          itemPool.release(s.meshRef as THREE.Mesh);
-        }
-      });
-    }
-    slots = result.slots;
+      mesh: potItem.mesh,
+      body: potItem.body,
+      screenX: screenPos.x,
+      screenY: screenPos.y,
+    });
   }
 
-  emit('slotUpdate', slots);
+  // 如果队列之前为空，发射第一个飞行动画事件
+  if (wasEmpty && pendingItems.length > 0) {
+    const first = pendingItems[0];
+    emit('foodPicked', { itemKey: first.itemKey, screenX: first.screenX, screenY: first.screenY });
+  }
+
   emit('potCountUpdate', potItems.length);
-
-  // 检查游戏状态
-  if (isLevelClear(potItems.length)) {
-    isPlaying = false;
-    emit('levelClear');
-  } else if (isGameOver(slots)) {
-    isPlaying = false;
-    emit('gameOver');
-  }
 }
 
 /** 清除所有食材 */
@@ -332,6 +343,7 @@ function clearAllItems() {
     }
   });
   slots = [];
+  pendingItems = []; // 清空待入槽队列
   emit('slotUpdate', slots);
 }
 
@@ -347,10 +359,50 @@ defineExpose({
   useShuffle,
   useMakeTriple,
   simulateShake,
+  completePickItem,
+  getTargetSlotIndex: predictSlotIndex,
   getSlots: () => slots,
   getPotCount: () => potItems.length,
   getItemTypes: () => levelItemTypes,
 });
+
+/** 完成食材入槽（飞行动画结束后由父组件调用） */
+function completePickItem() {
+  if (pendingItems.length === 0) return;
+  const { itemKey, mesh, body } = pendingItems.shift()!;
+
+  const slotItem: SlotItem = { itemKey, meshRef: mesh, bodyRef: body };
+  const result = addToSlot(slots, slotItem);
+
+  // 如果有三消，回收消除的mesh
+  if (result.matched > 0) {
+    const currentMeshes = new Set(result.slots.map((s) => s.meshRef));
+    slots.forEach((s) => {
+      if (!currentMeshes.has(s.meshRef)) {
+        itemPool.release(s.meshRef as THREE.Mesh);
+      }
+    });
+  }
+  slots = result.slots;
+
+  emit('slotUpdate', slots);
+  emit('potCountUpdate', potItems.length);
+
+  // 检查游戏状态
+  if (isLevelClear(potItems.length)) {
+    isPlaying = false;
+    emit('levelClear');
+  } else if (isGameOver(slots)) {
+    isPlaying = false;
+    emit('gameOver');
+  }
+
+  // 如果还有待入槽食材，发射下一个飞行动画
+  if (pendingItems.length > 0) {
+    const next = pendingItems[0];
+    emit('foodPicked', { itemKey: next.itemKey, screenX: next.screenX, screenY: next.screenY });
+  }
+}
 </script>
 
 <style scoped>
