@@ -9,6 +9,7 @@
         @levelClear="onLevelClear"
         @potCountUpdate="onPotCountUpdate"
         @foodPicked="onFoodPicked"
+        @tempUpdate="onTempUpdate"
       />
     </div>
 
@@ -16,6 +17,27 @@
     <div class="top-bar">
       <span class="level-info">关卡 {{ currentLevel }}</span>
       <span class="pot-count">锅内剩余: {{ potCount }}</span>
+    </div>
+
+    <!-- 暂存栏 UI - 显示在卡槽上方 -->
+    <div class="temp-bar" v-if="tempSlots.length > 0">
+      <div class="temp-container">
+        <!-- 只显示 3 个格子，但显示所有食材（包括叠加的） -->
+        <div
+          v-for="index in 3"
+          :key="'temp-' + (index - 1)"
+          class="temp-cell"
+        >
+          <!-- 显示该格子的所有叠加食材 -->
+          <template v-for="(item, itemIndex) in getTempItemsForSlot(index - 1)" :key="'item-' + itemIndex">
+            <div class="slot-food" 
+                 :style="{ backgroundColor: getItemStyle(item.itemKey).color, transform: `translate(-50%, -50%) translate(${item.offsetX}px, ${item.offsetY}px)`, zIndex: itemIndex + 1 }"
+                 @click="onTempSlotClick(index - 1, itemIndex)">
+              <span class="slot-emoji">{{ getItemStyle(item.itemKey).emoji }}</span>
+            </div>
+          </template>
+        </div>
+      </div>
     </div>
 
     <!-- 底部卡槽UI -->
@@ -39,7 +61,7 @@
 
     <!-- 道具按钮区域 -->
     <div class="tool-bar">
-      <button class="tool-btn" @click="useReturnTool" :disabled="selectedSlot < 0">道具回锅</button>
+      <button class="tool-btn" @click="useReturnTool" :disabled="displaySlots.length < 3">道具移出</button>
       <button class="tool-btn" @click="useShuffleTool">全局洗牌</button>
       <button class="tool-btn" @click="useTripleTool">一键凑三</button>
       <!-- 网页调试模拟摇晃按钮 -->
@@ -69,7 +91,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import GameContainer from '../components/GameContainer.vue';
 import { getLevelConfig, saveUserRecord } from '../core/Http';
 import { SlotItem } from '../utils/GameLogic';
@@ -77,8 +99,9 @@ import { SlotItem } from '../utils/GameLogic';
 const gameRef = ref<any>();
 const currentLevel = ref(1);
 const displaySlots = ref<SlotItem[]>([]);
+const tempSlots = ref<(SlotItem & { offsetX: number; offsetY: number })[]>([]);
 const potCount = ref(0);
-const selectedSlot = ref(-1); // 当前选中的卡槽索引（用于回锅道具）
+const selectedSlot = ref(-1); // 当前选中的卡槽索引（用于道具移出）
 const showFailDialog = ref(false);
 const showClearDialog = ref(false);
 const openid = ref('test_openid_' + Date.now()); // 模拟微信openid
@@ -94,6 +117,42 @@ const ITEM_STYLE: Record<string, { emoji: string; color: string }> = {
 
 function getItemStyle(itemKey: string): { emoji: string; color: string } {
   return ITEM_STYLE[itemKey] || { emoji: '🔵', color: '#aaaaaa' };
+}
+
+// 计算显示用的暂存栏数据
+const displayTempSlots = computed(() => {
+  // 只显示最后 3 个，超出的显示叠加效果
+  const slots = tempSlots.value;
+  if (slots.length <= 3) {
+    return [...slots]; // 创建新数组确保响应式更新
+  }
+
+  // 只返回最后 3 个食材进行显示
+  return [...slots.slice(-3)]; // 创建新数组确保响应式更新
+});
+
+/** 获取指定格子的所有食材（包括叠加的） */
+function getTempItemsForSlot(slotIndex: number) {
+  // 每个格子显示对应位置的食材
+  // 例如：slotIndex=0 显示第 0、3、6、9...个食材（每轮的第 1 个）
+  // slotIndex=1 显示第 1、4、7、10...个食材（每轮的第 2 个）
+  // slotIndex=2 显示第 2、5、8、11...个食材（每轮的第 3 个）
+  if (slotIndex < 0 || slotIndex >= 3) return [];
+  
+  const items = tempSlots.value;
+  const result: (SlotItem & { offsetX: number; offsetY: number })[] = [];
+  
+  // 收集该格子对应的所有食材
+  for (let i = slotIndex; i < items.length; i += 3) {
+    result.push(items[i]);
+  }
+  
+  return result;
+}
+
+/** 接收暂存栏更新事件 */
+function onTempUpdate(tempItems: (SlotItem & { offsetX: number; offsetY: number })[]) {
+  tempSlots.value = tempItems;
 }
 
 // ========== 飞行动画系统 ==========
@@ -221,11 +280,31 @@ function onSlotClick(index: number) {
   }
 }
 
-/** 道具：回锅 */
+/** 点击暂存栏 - 将食材移回卡槽 */
+function onTempSlotClick(slotIndex: number, itemIndex: number) {
+  if (displaySlots.value.length >= 7) {
+    console.log('卡槽已满，无法移动');
+    return;
+  }
+  
+  // 获取该格子的所有食材
+  const items = getTempItemsForSlot(slotIndex);
+  if (items.length === 0 || itemIndex >= items.length) return;
+  
+  // 获取要移动的食材（最上面的那个）
+  const item = items[itemIndex];
+  
+  // 调用游戏组件的方法将食材移回卡槽
+  gameRef.value?.moveTempToSlot(slotIndex, itemIndex);
+}
+
+/** 道具：移出 - 一键将卡槽里的前三个食材移动到暂存栏 */
 function useReturnTool() {
-  if (selectedSlot.value >= 0) {
-    gameRef.value?.useReturnToPot(selectedSlot.value);
-    selectedSlot.value = -1;
+  console.log('useReturnTool called, slots length:', displaySlots.value.length);
+  console.log('gameRef:', gameRef.value);
+  if (displaySlots.value.length >= 3) {
+    console.log('calling useReturnToPot');
+    gameRef.value?.useReturnToPot();
   }
 }
 
@@ -299,6 +378,41 @@ onMounted(() => {
   background: rgba(0, 0, 0, 0.5);
   padding: 4px 12px;
   border-radius: 12px;
+}
+
+.temp-bar {
+  position: absolute;
+  bottom: 145px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.7);
+  padding: 6px 10px;
+  border-radius: 8px;
+  z-index: 20;
+}
+
+.temp-container {
+  display: flex;
+  gap: 4px;
+}
+
+.temp-cell {
+  width: 52px;
+  height: 52px;
+  position: relative;
+}
+
+.temp-cell .slot-food {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.temp-cell .slot-food:hover {
+  transform: translate(-50%, -50%) scale(1.1) !important;
+  filter: brightness(1.2);
 }
 
 .slot-bar {

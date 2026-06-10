@@ -19,6 +19,7 @@ const emit = defineEmits<{
   (e: 'levelClear'): void;
   (e: 'potCountUpdate', count: number): void;
   (e: 'foodPicked', data: { itemKey: string; screenX: number; screenY: number }): void;
+  (e: 'tempUpdate', items: (SlotItem & { offsetX: number; offsetY: number })[]): void;
 }>();
 
 const containerRef = ref<HTMLDivElement>();
@@ -30,6 +31,7 @@ let itemPool: ItemPool;
 
 // 游戏状态
 let slots: SlotItem[] = [];
+let tempSlots: (SlotItem & { offsetX: number; offsetY: number })[] = []; // 暂存栏数据
 let potItems: { mesh: THREE.Mesh; body: CANNON.Body; itemKey: string }[] = [];
 let levelItemTypes: string[] = [];
 let isPlaying = false;
@@ -200,29 +202,126 @@ function onShakePot() {
   physicWorld.applyImpulseToAll(impulse);
 }
 
-/** 道具：回锅 - 选中卡槽物品丢回锅内 */
-function useReturnToPot(slotIndex: number) {
-  if (slotIndex < 0 || slotIndex >= slots.length) return;
-  const item = slots.splice(slotIndex, 1)[0];
+/** 道具：移出 - 一键将卡槽里的前三个食材移动到暂存栏 */
+function useReturnToPot() {
+  if (!isPlaying) return;
+  console.log('GameContainer.useReturnToPot called');
+  console.log('Current slots length:', slots.length);
+  // 获取前三个食材
+  const count = Math.min(3, slots.length);
+  console.log('Will move', count, 'items to temp');
+  console.log('Slots before move:', slots.map(s => s.itemKey));
+  for (let i = 0; i < count; i++) {
+    console.log('Loop iteration:', i, 'Current slots length:', slots.length);
+    // 从卡槽开头移除（shift）
+    const item = slots.shift()!;
+    console.log('Moving item:', item.itemKey);
 
-  // 重新放入锅内（y控制在壁面高度内）
-  const mesh = item.meshRef as THREE.Mesh;
-  const y = 1 + Math.random() * 2.5;
-  const x = (Math.random() - 0.5) * 3;
-  const z = (Math.random() - 0.5) * 3;
-  mesh.position.set(x, y, z);
-  mesh.visible = true;
-  threeEnv.scene.add(mesh);
+    // 回收mesh到对象池
+    if (item.meshRef) {
+      itemPool.release(item.meshRef as THREE.Mesh);
+    }
 
-  const body = physicWorld.createSphereBody(x, y, z);
-  physicWorld.registerBody(body, mesh);
+    // 计算暂存栏中的偏移位置（错开叠放效果）
+    const slotIndex = tempSlots.length % 3; // 食材应该放在哪个格子 (0, 1, 2)
+    const stackIndex = Math.floor(tempSlots.length / 3); // 是该格子的第几层 (0, 1, 2...)
+    
+    let offsetX = 0;
+    let offsetY = 0;
+    
+    if (stackIndex > 0) {
+      // 叠放的食材需要偏移
+      offsetX = (stackIndex % 3) * 2 - 2; // 水平错开：-2, 0, 2像素循环
+      offsetY = -stackIndex * 4 - 4; // 垂直向上叠加：-4, -8, -12像素
+    }
 
-  // 重新从对象池acquire（恢复颜色和active状态）
-  itemPool.acquire(item.itemKey); // 重新标记为active
-  potItems.push({ mesh, body, itemKey: item.itemKey });
+    // 添加到暂存栏
+    const tempItem = {
+      ...item,
+      offsetX,
+      offsetY,
+    };
+    tempSlots.push(tempItem);
+    console.log('Added to tempSlots:', tempItem.itemKey, 'Total tempSlots:', tempSlots.length);
+  }
 
-  emit('slotUpdate', slots);
-  emit('potCountUpdate', potItems.length);
+  console.log('After move - slots:', slots.length, 'tempSlots:', tempSlots.length);
+  console.log('Emitting slotUpdate with:', slots.map(s => s.itemKey));
+  console.log('Emitting tempUpdate with:', tempSlots.map(s => s.itemKey));
+  emit('slotUpdate', [...slots]); // 创建新数组确保响应式更新
+  emit('tempUpdate', [...tempSlots]); // 创建新数组确保响应式更新
+
+  // 检查游戏状态
+  if (isGameOver(slots)) {
+    isPlaying = false;
+    emit('gameOver');
+  }
+}
+
+/** 将暂存栏的食材移回卡槽 */
+function moveTempToSlot(slotIndex: number, itemIndex: number) {
+  if (!isPlaying) return;
+  if (slots.length >= 7) {
+    console.log('卡槽已满');
+    return;
+  }
+
+  // 获取该格子的所有食材
+  const items = getTempItemsForSlot(slotIndex);
+  if (items.length === 0 || itemIndex >= items.length) return;
+
+  // 获取要移动的食材
+  const item = items[itemIndex];
+
+  // 从暂存栏移除该食材
+  const actualIndex = slotIndex + itemIndex * 3;
+  
+  if (actualIndex >= 0 && actualIndex < tempSlots.length) {
+    // 从暂存栏移除
+    tempSlots.splice(actualIndex, 1);
+    emit('tempUpdate', [...tempSlots]);
+
+    // 将食材加入待入槽队列（飞行动画）
+    // 暂存栏的食材没有 mesh，需要从对象池创建
+    const newMesh = itemPool.acquire(item.itemKey);
+    const newBody = physicWorld.createSphereBody(0, 5, 0);
+    physicWorld.registerBody(newBody, newMesh);
+
+    // 计算暂存栏中该食材的位置（用于飞行动画起点）
+    // 暂存栏位置在屏幕上方中间，估算坐标
+    const tempBarX = window.innerWidth / 2;
+    const tempBarY = window.innerHeight - 180; // 暂存栏在卡槽上方
+    
+    pendingItems.push({
+      itemKey: item.itemKey,
+      mesh: newMesh,
+      body: newBody,
+      screenX: tempBarX + (slotIndex - 1) * 60, // 根据格子位置偏移
+      screenY: tempBarY + itemIndex * -20, // 根据叠加层数偏移
+    });
+
+    // 如果队列之前为空，发射第一个飞行动画事件
+    const wasEmpty = pendingItems.length === 1;
+    if (wasEmpty) {
+      const first = pendingItems[0];
+      emit('foodPicked', { itemKey: first.itemKey, screenX: first.screenX, screenY: first.screenY });
+    }
+  }
+}
+
+/** 获取指定格子的所有食材（包括叠加的） */
+function getTempItemsForSlot(slotIndex: number) {
+  if (slotIndex < 0 || slotIndex >= 3) return [];
+  
+  const items = tempSlots;
+  const result: (SlotItem & { offsetX: number; offsetY: number })[] = [];
+  
+  // 收集该格子对应的所有食材
+  for (let i = slotIndex; i < items.length; i += 3) {
+    result.push(items[i]);
+  }
+  
+  return result;
 }
 
 /** 道具：全局洗牌 - 锅内全部食材随机重置位置 */
@@ -343,8 +442,11 @@ function clearAllItems() {
     }
   });
   slots = [];
+  // 清空暂存栏
+  tempSlots = [];
   pendingItems = []; // 清空待入槽队列
   emit('slotUpdate', slots);
+  emit('tempUpdate', tempSlots);
 }
 
 /** 模拟摇晃（网页调试用） */
@@ -360,8 +462,10 @@ defineExpose({
   useMakeTriple,
   simulateShake,
   completePickItem,
+  moveTempToSlot,
   getTargetSlotIndex: predictSlotIndex,
   getSlots: () => slots,
+  getTempSlots: () => tempSlots,
   getPotCount: () => potItems.length,
   getItemTypes: () => levelItemTypes,
 });
