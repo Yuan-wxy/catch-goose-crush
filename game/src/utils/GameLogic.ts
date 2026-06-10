@@ -1,6 +1,7 @@
 /**
  * 三消算法工具
- * 卡槽数组：7格，3个相同item自动消除
+ * 卡槽数组：7格，同品种≥3个自动消除
+ * 新食材插入到同品种旁边，相同品种自动挨着
  * 7格全部填满无法消除 → 游戏失败
  * 锅内全部食材消除完毕 → 通关
  */
@@ -16,6 +17,8 @@ export interface SlotItem {
 
 /**
  * 向卡槽添加食材，自动检测三消
+ * 新食材会插入到同品种食材旁边，相同品种自动挨着
+ * 同品种≥3个即消除，不需要连续相邻
  * @returns { slots: 更新后的卡槽, matched: 本次消除的item数量 }
  */
 export function addToSlot(
@@ -23,38 +26,61 @@ export function addToSlot(
   item: SlotItem,
   maxSlots = 7,
 ): { slots: SlotItem[]; matched: number } {
-  // 添加到卡槽末尾
-  slots.push(item);
+  // 查找同品种食材的最后位置，插入到它旁边
+  let insertIndex = -1;
+  for (let i = slots.length - 1; i >= 0; i--) {
+    if (slots[i].itemKey === item.itemKey) {
+      insertIndex = i + 1; // 插入到同品种后面
+      break;
+    }
+  }
 
-  // 检测三消：找到所有相同itemKey的位置
-  let matched = 0;
+  if (insertIndex === -1) {
+    // 没有同品种，添加到末尾
+    slots.push(item);
+  } else {
+    // 插入到同品种旁边，使相同品种挨着
+    slots.splice(insertIndex, 0, item);
+  }
+
+  // 检测三消：同品种≥3即可消除
+  const prevLen = slots.length;
   const newSlots = checkAndRemoveTriples(slots);
-  matched = slots.length - newSlots.length;
+  const matched = prevLen - newSlots.length;
 
   return { slots: newSlots, matched };
 }
 
 /**
- * 检测并消除三消
- * 从左到右扫描，相邻3个相同itemKey即消除
+ * 检测并消除三消（计数制）
+ * 统计每种品种数量，≥3个则消除3个
  * 消除后可能产生新的三消，递归检测
  */
 export function checkAndRemoveTriples(slots: SlotItem[]): SlotItem[] {
   let result = [...slots];
   let found = true;
 
-  // 递归消除直到没有新的三消
   while (found) {
     found = false;
-    for (let i = 0; i <= result.length - 3; i++) {
-      if (
-        result[i].itemKey === result[i + 1].itemKey &&
-        result[i + 1].itemKey === result[i + 2].itemKey
-      ) {
-        // 消除这3个
-        result.splice(i, 3);
+    // 统计每种品种数量
+    const countMap: Record<string, number> = {};
+    result.forEach((s) => {
+      countMap[s.itemKey] = (countMap[s.itemKey] || 0) + 1;
+    });
+
+    // 找到第一个数量≥3的品种，消除3个
+    for (const [key, count] of Object.entries(countMap)) {
+      if (count >= 3) {
+        let removed = 0;
+        result = result.filter((s) => {
+          if (s.itemKey === key && removed < 3) {
+            removed++;
+            return false;
+          }
+          return true;
+        });
         found = true;
-        break; // 重新从头扫描
+        break; // 重新统计和检测
       }
     }
   }

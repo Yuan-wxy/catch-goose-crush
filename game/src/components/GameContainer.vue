@@ -240,7 +240,14 @@ function clearAllItems() {
     itemPool.release(item.mesh);
   });
   potItems = [];
+  // 回收卡槽中的mesh并清空
+  slots.forEach((s) => {
+    if (s.meshRef) {
+      itemPool.release(s.meshRef as THREE.Mesh);
+    }
+  });
   slots = [];
+  emit('slotUpdate', slots);
 }
 
 /** 模拟摇晃（网页调试用） */
