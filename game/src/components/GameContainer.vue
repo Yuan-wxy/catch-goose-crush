@@ -273,6 +273,12 @@ function moveTempToSlot(slotIndex: number, itemIndex: number) {
   // 获取要移动的食材
   const item = items[itemIndex];
 
+  console.log('=== moveTempToSlot 开始 ===');
+  console.log('暂存栏食材:', item.itemKey);
+  console.log('当前卡槽状态:', slots.map(s => s.itemKey));
+  console.log('当前卡槽数量:', slots.length);
+  console.log('=========================');
+
   // 从暂存栏移除该食材
   const actualIndex = slotIndex + itemIndex * 3;
   
@@ -300,10 +306,13 @@ function moveTempToSlot(slotIndex: number, itemIndex: number) {
       screenY: tempBarY + itemIndex * -20, // 根据叠加层数偏移
     });
 
+    console.log('已加入待入槽队列，当前队列长度:', pendingItems.length);
+
     // 如果队列之前为空，发射第一个飞行动画事件
     const wasEmpty = pendingItems.length === 1;
     if (wasEmpty) {
       const first = pendingItems[0];
+      console.log('发射飞行动画事件');
       emit('foodPicked', { itemKey: first.itemKey, screenX: first.screenX, screenY: first.screenY });
     }
   }
@@ -493,10 +502,17 @@ function completePickItem() {
   emit('potCountUpdate', potItems.length);
 
   // 检查游戏状态
-  if (isLevelClear(potItems.length)) {
+  // 通关条件：锅里、卡槽和暂存栏都没有食材
+  const allClear = potItems.length === 0 && slots.length === 0 && tempSlots.length === 0;
+  
+  if (allClear) {
+    console.log('=== 关卡通关！===');
+    console.log('锅里:', potItems.length, '卡槽:', slots.length, '暂存栏:', tempSlots.length);
     isPlaying = false;
     emit('levelClear');
   } else if (isGameOver(slots)) {
+    console.log('=== 游戏失败 ===');
+    console.log('锅里:', potItems.length, '卡槽:', slots.length, '暂存栏:', tempSlots.length);
     isPlaying = false;
     emit('gameOver');
   }
