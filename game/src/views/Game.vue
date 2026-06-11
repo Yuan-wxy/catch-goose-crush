@@ -79,12 +79,22 @@
     </div>
 
     <!-- 通关弹窗 -->
-    <div v-if="showClearDialog" class="dialog-overlay">
+    <!-- 关卡1通关弹窗 - 自动进入下一关 -->
+    <div v-if="showClearDialog && currentLevel === 1" class="dialog-overlay fade-overlay" :class="{ fading: isFading }">
+      <div class="dialog clear-dialog level1-dialog" :class="{ fading: isFading }">
+        <h2 class="level1-title">进入最后一关</h2>
+      </div>
+    </div>
+
+    <!-- 关卡2通关弹窗 -->
+    <div v-if="showClearDialog && currentLevel === 2" class="dialog-overlay">
       <div class="dialog clear-dialog">
-        <div class="goose-icon">🎉</div>
-        <h2>恭喜通关！</h2>
-        <p>关卡 {{ currentLevel }} 已完成</p>
-        <button class="dialog-btn" @click="nextLevel">下一关</button>
+        <div class="goose-icon">{{ caughtGooseItem ? getItemStyle(caughtGooseItem).emoji : '🦢' }}</div>
+        <h2>成功抓到大鹅！</h2>
+        <p v-if="caughtGooseItem" class="caught-item">
+          抓到了 {{ getItemStyle(caughtGooseItem).emoji }} {{ caughtGooseItem }}
+        </p>
+        <button class="dialog-btn" @click="restartFromLevel1">再玩一次</button>
       </div>
     </div>
   </div>
@@ -105,6 +115,10 @@ const selectedSlot = ref(-1); // 当前选中的卡槽索引（用于道具移�
 const showFailDialog = ref(false);
 const showClearDialog = ref(false);
 const openid = ref('test_openid_' + Date.now()); // 模拟微信openid
+const level2Items = ref<string[]>([]); // 记录关卡二的食材种类，用于最后随机展示
+const caughtGooseItem = ref<string>(''); // 关卡二抓到的大鹅（随机食材）
+const countdown = ref(3); // 关卡1通关倒计时
+const isFading = ref(false); // 是否正在淡入淡出
 
 /** 食材样式映射 - 与ItemPool.ts颜色和3D球体保持一致 */
 const ITEM_STYLE: Record<string, { emoji: string; color: string }> = {
@@ -239,11 +253,19 @@ async function startLevel(levelNo: number) {
   currentLevel.value = levelNo;
   try {
     const res: any = await getLevelConfig(levelNo);
+    // 记录关卡二的食材种类，用于最后随机展示
+    if (levelNo === 2) {
+      level2Items.value = res.itemTypeList || [];
+    }
     gameRef.value?.loadLevel(res.itemTypeList, res.itemTotal);
   } catch (err) {
     console.error('加载关卡失败:', err);
     // 如果接口失败，使用默认配置
-    gameRef.value?.loadLevel(['apple', 'banana', 'orange'], 12);
+    const defaultItems = ['apple', 'banana', 'orange'];
+    if (levelNo === 2) {
+      level2Items.value = defaultItems;
+    }
+    gameRef.value?.loadLevel(defaultItems, 12);
   }
 }
 
@@ -265,7 +287,32 @@ function onGameOver() {
 
 /** 通关回调 - 保存记录并解锁下一关 */
 async function onLevelClear() {
+  // 关卡2通关时，从关卡2的食材中随机选一个作为抓到的大鹅
+  if (currentLevel.value === 2 && level2Items.value.length > 0) {
+    const randomIndex = Math.floor(Math.random() * level2Items.value.length);
+    caughtGooseItem.value = level2Items.value[randomIndex];
+  }
+  
   showClearDialog.value = true;
+  
+  // 关卡1通关时等待3秒后自动进入关卡2
+  if (currentLevel.value === 1) {
+    isFading.value = false;
+    
+    // 等待3秒后开始淡出动画
+    setTimeout(() => {
+      // 开始淡出动画
+      isFading.value = true;
+      
+      // 淡出动画结束后进入关卡2
+      setTimeout(() => {
+        showClearDialog.value = false;
+        isFading.value = false;
+        startLevel(2);
+      }, 500); // 与CSS动画时间一致
+    }, 3000); // 等待3秒
+  }
+  
   try {
     await saveUserRecord(openid.value, currentLevel.value);
   } catch (err) {
@@ -326,13 +373,24 @@ function simulateShake() {
 /** 重新挑战 */
 function restartGame() {
   showFailDialog.value = false;
+  caughtGooseItem.value = '';
   startLevel(currentLevel.value);
 }
 
 /** 进入下一关 */
 function nextLevel() {
   showClearDialog.value = false;
-  startLevel(currentLevel.value + 1);
+  // 总共只有两关，关卡1通关后进入关卡2
+  if (currentLevel.value === 1) {
+    startLevel(2);
+  }
+}
+
+/** 从关卡1重新开始 */
+function restartFromLevel1() {
+  showClearDialog.value = false;
+  caughtGooseItem.value = '';
+  startLevel(1);
 }
 
 onMounted(() => {
@@ -585,6 +643,12 @@ onMounted(() => {
   color: #aaa;
 }
 
+.caught-item {
+  font-size: 18px;
+  color: #ffd700;
+  font-weight: bold;
+}
+
 .dialog-btn {
   padding: 12px 32px;
   border: none;
@@ -600,5 +664,30 @@ onMounted(() => {
 
 .clear-dialog .dialog-btn {
   background: #4ecdc4;
+}
+
+/* 关卡1通关标题样式 */
+.level1-title {
+  font-size: 28px;
+  color: #4ecdc4;
+  margin: 20px 0;
+}
+
+/* 淡出动画 */
+.fade-overlay {
+  transition: opacity 0.5s ease;
+}
+
+.fade-overlay.fading {
+  opacity: 0;
+}
+
+.level1-dialog {
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+
+.level1-dialog.fading {
+  opacity: 0;
+  transform: scale(0.9);
 }
 </style>
