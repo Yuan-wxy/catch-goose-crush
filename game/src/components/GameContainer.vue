@@ -71,16 +71,26 @@ function predictSlotIndex(itemKey: string): number {
 }
 
 /** 初始化3D场景+物理世界 */
-onMounted(() => {
+onMounted(async () => {
   if (!containerRef.value) return;
 
   threeEnv = new ThreeEnv(containerRef.value);
   physicWorld = new PhysicWorld();
   shakeSensor = new ShakeSensor();
-  itemPool = new ItemPool(30);
+  itemPool = new ItemPool(30, undefined, threeEnv.scene, (oldMesh, newMesh) => {
+      // 更新物理世界中body和mesh的关联
+      physicWorld.replaceMesh(oldMesh, newMesh);
+      
+      // 更新potItems数组中的mesh引用
+      const idx = potItems.findIndex((item) => item.mesh === oldMesh);
+      if (idx >= 0) {
+        potItems[idx].mesh = newMesh;
+        console.log('potItems数组中mesh引用已更新');
+      }
+    });
 
   // 创建锅体3D模型和碰撞体
-  threeEnv.createPot();
+  await threeEnv.createPot();
   physicWorld.createPotCollider();
 
   // 注册每帧物理步进+坐标同步

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 /**
  * Three.js 3D场景初始化封装
@@ -9,6 +10,7 @@ export class ThreeEnv {
   camera: THREE.PerspectiveCamera;
   renderer: THREE.WebGLRenderer;
   private animFns: (() => void)[] = [];
+  potGroup: THREE.Group | null = null; // 锅体Group引用
 
   constructor(container: HTMLElement) {
     const w = container.clientWidth;
@@ -52,8 +54,60 @@ export class ThreeEnv {
     this.animFns.push(fn);
   }
 
-  /** 创建白色漏斗锅体 */
-  createPot(): THREE.Group {
+  /** 创建锅体 - 优先使用GLB模型，回退到几何体 */
+  async createPot(): Promise<THREE.Group> {
+    return new Promise((resolve) => {
+      const loader = new GLTFLoader();
+      
+      loader.load(
+        '/models/wok.glb',
+        (gltf) => {
+          console.log('锅体GLB模型加载成功');
+          const potGroup = gltf.scene;
+          
+          // 调整锅体位置（物理碰撞体：锅底y=-2，锅口y=2）
+          potGroup.position.y = 0;
+          
+          // 根据模型尺寸调整缩放，使模型与物理碰撞体匹配
+          // 物理碰撞体参数：锅底半径3，锅口半径5，高度4
+          const box = new THREE.Box3().setFromObject(potGroup);
+          const size = box.getSize(new THREE.Vector3());
+          const maxDim = Math.max(size.x, size.y, size.z);
+          
+          // 目标尺寸：直径10（半径5），高度4
+          const targetMaxDim = 10;
+          const scale = targetMaxDim / maxDim;
+          potGroup.scale.set(scale, scale, scale);
+          
+          console.log(`锅体模型缩放: ${scale.toFixed(2)}`);
+          
+          // 标记为锅体
+          potGroup.traverse((child) => {
+            if ((child as THREE.Mesh).isMesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+            }
+          });
+          
+          this.scene.add(potGroup);
+          this.potGroup = potGroup;
+          console.log('锅体已添加到场景');
+          resolve(potGroup);
+        },
+        undefined,
+        (error) => {
+          console.warn('锅体GLB模型加载失败，使用几何体替代:', error);
+          // 回退到几何体创建
+          const potGroup = this.createFallbackPot();
+          this.potGroup = potGroup;
+          resolve(potGroup);
+        }
+      );
+    });
+  }
+
+  /** 创建fallback几何体锅体 */
+  private createFallbackPot(): THREE.Group {
     const potGroup = new THREE.Group();
 
     // 锅体外壁 - 上大下小的漏斗形

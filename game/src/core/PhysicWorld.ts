@@ -103,6 +103,17 @@ export class PhysicWorld {
     this.bodies.push({ body, mesh });
   }
 
+  /** 替换已注册的mesh（用于GLB模型替换fallback球体） */
+  replaceMesh(oldMesh: any, newMesh: any) {
+    const idx = this.bodies.findIndex((b) => b.mesh === oldMesh);
+    if (idx >= 0) {
+      this.bodies[idx].mesh = newMesh;
+      console.log('物理世界mesh关联已更新');
+    } else {
+      console.warn('未找到对应的body关联');
+    }
+  }
+
   /** 取消注册刚体与Mesh的关联（食材被拾取时调用） */
   unregisterBody(body: CANNON.Body) {
     const idx = this.bodies.findIndex((b) => b.body === body);

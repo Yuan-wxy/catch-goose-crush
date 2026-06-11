@@ -89,10 +89,13 @@
     <!-- 关卡2通关弹窗 -->
     <div v-if="showClearDialog && currentLevel === 2" class="dialog-overlay">
       <div class="dialog clear-dialog">
-        <div class="goose-icon">{{ caughtGooseItem ? getItemStyle(caughtGooseItem).emoji : '🦢' }}</div>
+        <!-- 3D模型展示区域 -->
+        <div class="showcase-container">
+          <canvas ref="showcaseCanvas" class="showcase-canvas"></canvas>
+        </div>
         <h2>成功抓到大鹅！</h2>
         <p v-if="caughtGooseItem" class="caught-item">
-          抓到了 {{ getItemStyle(caughtGooseItem).emoji }} {{ caughtGooseItem }}
+          抓到了 {{ caughtGooseItem }}
         </p>
         <button class="dialog-btn" @click="restartFromLevel1">再玩一次</button>
       </div>
@@ -101,7 +104,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch, onUnmounted } from 'vue';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import GameContainer from '../components/GameContainer.vue';
 import { getLevelConfig, saveUserRecord } from '../core/Http';
 import { SlotItem } from '../utils/GameLogic';
@@ -119,6 +124,166 @@ const level2Items = ref<string[]>([]); // 记录关卡二的食材种类，用�
 const caughtGooseItem = ref<string>(''); // 关卡二抓到的大鹅（随机食材）
 const countdown = ref(3); // 关卡1通关倒计时
 const isFading = ref(false); // 是否正在淡入淡出
+
+// 3D展示相关
+const showcaseCanvas = ref<HTMLCanvasElement | null>(null);
+let showcaseScene: THREE.Scene | null = null;
+let showcaseCamera: THREE.PerspectiveCamera | null = null;
+let showcaseRenderer: THREE.WebGLRenderer | null = null;
+let showcaseMesh: THREE.Object3D | null = null;
+let animationId: number | null = null;
+
+// 模型路径映射
+const MODEL_PATHS: Record<string, string> = {
+  apple: '/models/apple.glb',
+  banana: '/models/banana.glb',
+  orange: '/models/orange.glb',
+  grape: '/models/grape.glb',
+  peach: '/models/peach.glb',
+};
+
+// 初始化3D展示场景
+function initShowcaseScene(canvas: HTMLCanvasElement) {
+  // 清理旧场景
+  if (showcaseRenderer) {
+    showcaseRenderer.dispose();
+  }
+  
+  const width = 200;
+  const height = 200;
+  
+  // 场景
+  showcaseScene = new THREE.Scene();
+  showcaseScene.background = new THREE.Color(0x2a2a3e);
+  
+  // 相机
+  showcaseCamera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
+  showcaseCamera.position.set(0, 1, 5);
+  showcaseCamera.lookAt(0, 0, 0);
+  
+  // 渲染器
+  showcaseRenderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  showcaseRenderer.setSize(width, height);
+  showcaseRenderer.setPixelRatio(window.devicePixelRatio);
+  
+  // 光照
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+  showcaseScene.add(ambientLight);
+  
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  directionalLight.position.set(5, 5, 5);
+  showcaseScene.add(directionalLight);
+}
+
+// 加载并显示3D模型
+function loadShowcaseModel(itemKey: string) {
+  if (!showcaseScene || !showcaseCamera) return;
+  
+  // 移除旧模型
+  if (showcaseMesh) {
+    showcaseScene.remove(showcaseMesh);
+    showcaseMesh = null;
+  }
+  
+  const modelPath = MODEL_PATHS[itemKey];
+  if (!modelPath) return;
+  
+  const loader = new GLTFLoader();
+  loader.load(
+    modelPath,
+    (gltf) => {
+      let model = gltf.scene;
+      
+      // 计算模型尺寸并缩放
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const scale = 2 / maxDim; // 目标尺寸为2
+      model.scale.set(scale, scale, scale);
+      
+      // 居中模型
+      box.setFromObject(model);
+      const center = box.getCenter(new THREE.Vector3());
+      model.position.sub(center);
+      model.position.y = 0;
+      
+      // 标记材质
+      model.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          (child as THREE.Mesh).castShadow = true;
+        }
+      });
+      
+      showcaseMesh = model;
+      showcaseScene!.add(model);
+    },
+    undefined,
+    (error) => {
+      console.error('展示模型加载失败:', error);
+    }
+  );
+}
+
+// 动画循环
+function animateShowcase() {
+  animationId = requestAnimationFrame(animateShowcase);
+  
+  // 模型旋转
+  if (showcaseMesh) {
+    showcaseMesh.rotation.y += 0.02;
+  }
+  
+  if (showcaseRenderer && showcaseScene && showcaseCamera) {
+    showcaseRenderer.render(showcaseScene, showcaseCamera);
+  }
+}
+
+// 清理展示场景
+function cleanupShowcase() {
+  if (animationId) {
+    cancelAnimationFrame(animationId);
+    animationId = null;
+  }
+  if (showcaseRenderer) {
+    showcaseRenderer.dispose();
+    showcaseRenderer = null;
+  }
+  showcaseScene = null;
+  showcaseCamera = null;
+  showcaseMesh = null;
+}
+
+// 监听展示画布
+watch(showcaseCanvas, (canvas) => {
+  if (canvas) {
+    initShowcaseScene(canvas);
+    animateShowcase();
+    
+    // 如果已有被抓到的食材，加载模型
+    if (caughtGooseItem.value) {
+      loadShowcaseModel(caughtGooseItem.value);
+    }
+  } else {
+    cleanupShowcase();
+  }
+});
+
+// 监听被抓到的食材变化
+watch(caughtGooseItem, (newItem) => {
+  if (newItem && showcaseScene) {
+    loadShowcaseModel(newItem);
+  }
+});
+
+// 监听弹窗显示，确保通关后加载模型
+watch([showClearDialog, currentLevel], ([show, level]) => {
+  if (show && level === 2 && caughtGooseItem.value && showcaseScene) {
+    // 延迟一点确保canvas已渲染
+    setTimeout(() => {
+      loadShowcaseModel(caughtGooseItem.value);
+    }, 100);
+  }
+});
 
 /** 食材样式映射 - 与ItemPool.ts颜色和3D球体保持一致 */
 const ITEM_STYLE: Record<string, { emoji: string; color: string }> = {
@@ -396,6 +561,10 @@ function restartFromLevel1() {
 onMounted(() => {
   startLevel(1);
 });
+
+onUnmounted(() => {
+  cleanupShowcase();
+});
 </script>
 
 <style scoped>
@@ -628,9 +797,19 @@ onMounted(() => {
   border: 2px solid #4ecdc4;
 }
 
-.goose-icon {
-  font-size: 60px;
-  margin-bottom: 10px;
+.showcase-container {
+  width: 200px;
+  height: 200px;
+  margin: 0 auto 15px;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.showcase-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .dialog h2 {
